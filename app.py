@@ -46,18 +46,17 @@ def generate_noise(duration, fps=44100, volume=0.01):
     return AudioArrayClip(noise, fps=fps)
 
 def apply_zoom_crop(clip, intensity=0.03):
-    # Zoom fixo removendo bordas (Mais seguro e rápido que zoom dinâmico)
+    # VERSÃO TURBO: Apenas corta as bordas, sem redimensionar.
+    # Isso muda a resolução (ex: 1920x1080 -> 1860x1040), o que é PERFEITO
+    # para quebrar o Hash sem gastar CPU redimensionando.
     w = clip.w
     h = clip.h
     margin_w = int(w * intensity)
     margin_h = int(h * intensity)
     
-    # 1. Corta as bordas (Crop)
-    cropped = clip.cropped(x1=margin_w, y1=margin_h, x2=w-margin_w, y2=h-margin_h)
-    
-    # 2. Redimensiona de volta para o tamanho original
-    # Sintaxe V2 segura
-    return cropped.with_effects([vfx.Resize(new_size=(w, h))])
+    # Apenas corta. O vídeo final ficará levemente menor (imperceptível),
+    # mas renderizará MUITO mais rápido.
+    return clip.cropped(x1=margin_w, y1=margin_h, x2=w-margin_w, y2=h-margin_h)
 
 # --- PROCESSAMENTO PRINCIPAL ---
 def process_video(uploaded_file):
