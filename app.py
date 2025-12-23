@@ -3,17 +3,16 @@ import tempfile
 import os
 import numpy as np
 
-# IMPORTAÇÕES DA NOVA VERSÃO (MOVIEPY 2.0+)
-# Não usamos mais 'moviepy.editor'
+# IMPORTAÇÕES DA NOVA VERSÃO
 from moviepy import VideoFileClip, concatenate_videoclips, AudioArrayClip, CompositeAudioClip
 import moviepy.video.fx as vfx
-import moviepy.audio.fx as afx
+# Removemos a importação problemática de audio.fx
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Blindador PRO 2.0", page_icon="🛡️", layout="centered")
+st.set_page_config(page_title="Blindador PRO 3.0", page_icon="🛡️", layout="centered")
 
-st.title("🛡️ Blindagem de Vídeo (Versão 2.0)")
-st.info("ℹ️ Sistema atualizado para rodar no Python moderno do Streamlit Cloud.")
+st.title("🛡️ Blindagem de Vídeo (Versão Estável)")
+st.success("Status: Sistema online e pronto para processar.")
 
 # --- CONTROLES LATERAIS ---
 st.sidebar.header("🎛️ Configurações")
@@ -22,8 +21,8 @@ chunk_len = st.sidebar.slider("Resolução (s)", 0.01, 0.10, 0.05)
 
 st.sidebar.markdown("---")
 use_noise = st.sidebar.checkbox("Injetar Ruído (-50dB)", value=True)
-use_eq = st.sidebar.checkbox("Equalização Anti-IA", value=True)
 use_speed = st.sidebar.checkbox("Aceleração (1.05x)", value=True)
+# Removemos o checkbox de EQ para evitar crash
 
 # --- FUNÇÃO GERADORA DE RUÍDO ---
 def generate_noise(duration, fps=44100, volume=0.01):
@@ -40,26 +39,22 @@ def process_video(uploaded_file):
     bar = st.progress(0)
     
     try:
-        # Carrega o vídeo
         video = VideoFileClip(tfile.name)
         audio = video.audio
         
         # 1. ANÁLISE DE SILÊNCIO
-        status_text.text("🔍 1/4: Mapeando silêncios...")
+        status_text.text("🔍 1/3: Mapeando silêncios...")
         intervals = []
         speaking = False
         start_time = 0
         
-        # Convertendo áudio para array para análise rápida
-        # MoviePy 2.0 lida com audio arrays de forma diferente, vamos usar iteração segura
         duration = video.duration
         
+        # Loop seguro de análise
         for i, t in enumerate(np.arange(0, duration, chunk_len)):
-            # Extrair trecho de áudio
             chunk = audio.subclipped(t, min(t + chunk_len, duration))
             
-            # Analisar volume (RMS ou Max)
-            # Em v2, max_volume() ainda existe, mas convertendo para array é mais seguro
+            # Análise de volume segura
             chunk_data = chunk.to_soundarray(fps=22050)
             if chunk_data.size > 0:
                 vol = np.max(np.abs(chunk_data))
@@ -86,42 +81,31 @@ def process_video(uploaded_file):
             return None, "Erro: Nenhum áudio detectado acima do limite. Tente diminuir o Threshold."
 
         # 2. CORTE E CONCATENAÇÃO
-        status_text.text(f"✂️ 2/4: Removendo pausas ({len(intervals)} cortes)...")
-        # Nota: 'subclipped' é o novo 'subclip' seguro em v2
+        status_text.text(f"✂️ 2/3: Aplicando {len(intervals)} cortes de blindagem...")
         clips = [video.subclipped(start, end) for start, end in intervals]
         final_clip = concatenate_videoclips(clips)
-        bar.progress(50)
+        bar.progress(60)
 
-        # 3. ACELERAÇÃO (Sintaxe V2)
+        # 3. EFEITOS ANTI-IA (Aceleração + Ruído)
+        status_text.text("🎚️ 3/3: Aplicando ruído e aceleração...")
+        
+        # Aceleração
         if use_speed:
-            # Em v2, usamos with_effects e MultiplySpeed
             final_clip = final_clip.with_effects([vfx.MultiplySpeed(1.05)])
 
-        # 4. ENGENHARIA DE ÁUDIO
-        status_text.text("🎚️ 3/4: Aplicando blindagem de áudio...")
-        current_audio = final_clip.audio
-        
-        if use_eq:
-            # Sintaxe v2 para filtros de áudio
-            # HighPass e LowPass
-            effects = [
-                afx.AudioHighPass(100), # Remove graves
-                afx.AudioLowPass(8000)  # Remove super agudos
-            ]
-            current_audio = current_audio.with_effects(effects)
-        
+        # Ruído de Fundo (Noise Floor)
         if use_noise:
+            current_audio = final_clip.audio
             noise_clip = generate_noise(final_clip.duration, fps=44100, volume=0.005)
-            current_audio = CompositeAudioClip([current_audio, noise_clip])
+            # CompositeAudioClip mistura os dois sons
+            final_clip.audio = CompositeAudioClip([current_audio, noise_clip])
             
-        final_clip.audio = current_audio
-        bar.progress(70)
+        bar.progress(80)
 
-        # 5. RENDERIZAÇÃO
-        status_text.text("💾 4/4: Renderizando (Aguarde)...")
+        # 4. RENDERIZAÇÃO
+        status_text.text("💾 Renderizando arquivo final... (Isso leva +- 1 min)")
         output_path = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4').name
         
-        # preset='ultrafast' ajuda a não dar timeout no servidor gratuito
         final_clip.write_videofile(
             output_path,
             codec='libx264',
@@ -132,7 +116,7 @@ def process_video(uploaded_file):
         )
         
         bar.progress(100)
-        status_text.text("✅ Vídeo Blindado e Pronto!")
+        status_text.text("✅ Sucesso! Seu vídeo está pronto.")
         
         video.close()
         return output_path, None
@@ -147,17 +131,18 @@ if uploaded_file is not None:
     st.video(uploaded_file)
     
     if st.button("🛡️ INICIAR BLINDAGEM", type="primary"):
-        with st.spinner('Processando... (Isso pode levar alguns minutos)'):
+        with st.spinner('Processando...'):
             result_path, error = process_video(uploaded_file)
             
             if error:
                 st.error(error)
             else:
-                st.success("Sucesso!")
+                st.balloons()
+                st.success("Vídeo Blindado Gerado!")
                 with open(result_path, "rb") as f:
                     st.download_button(
-                        label="⬇️ BAIXAR VÍDEO BLINDADO",
+                        label="⬇️ BAIXAR VÍDEO AGORA",
                         data=f,
-                        file_name="video_blindado_v2.mp4",
+                        file_name="video_blindado_final.mp4",
                         mime="video/mp4"
                     )
