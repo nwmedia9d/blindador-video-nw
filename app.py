@@ -1,6 +1,7 @@
 import streamlit as st
 import tempfile
 import os
+import random
 import numpy as np
 
 # IMPORTAÇÕES (MoviePy v2.0+)
@@ -8,15 +9,15 @@ from moviepy import VideoFileClip, concatenate_videoclips, AudioArrayClip, Compo
 import moviepy.video.fx as vfx
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Blindador ULTRA v2", page_icon="🛡️", layout="centered")
+st.set_page_config(page_title="Blindador ULTRA v3", page_icon="🛡️", layout="centered")
 
-st.title("🛡️ Blindagem Total (Áudio + Vídeo)")
-st.info("ℹ️ Agora com efeitos visuais para gerar um arquivo 100% inédito (Hash único).")
+st.title("🛡️ Blindagem Total (Hash Breaking)")
+st.success("Status: Sistema corrigido e online.")
 
 # --- BARRA LATERAL (CONTROLES) ---
 st.sidebar.header("🎛️ Painel de Controle")
 
-# 1. ÁUDIO (Mantivemos igual)
+# 1. ÁUDIO
 st.sidebar.subheader("1. Áudio e Voz")
 threshold = st.sidebar.slider("Sensibilidade de Corte", 0.01, 0.10, 0.03, 0.005)
 chunk_len = st.sidebar.slider("Resolução (s)", 0.01, 0.10, 0.05)
@@ -26,17 +27,17 @@ noise_level = st.sidebar.slider("Nível do Ruído", 0.001, 0.050, 0.015, format=
 
 st.sidebar.markdown("---")
 
-# 2. VÍDEO (NOVIDADES!)
+# 2. VÍDEO
 st.sidebar.subheader("2. Efeitos Visuais (Hash Breaker)")
 
-use_zoom = st.sidebar.checkbox("Aplicar Zoom Lento (Ken Burns)", value=True, help="O vídeo aproxima lentamente, mudando todos os pixels a cada frame.")
+use_zoom = st.sidebar.checkbox("Aplicar Zoom Fixo (Corte de Borda)", value=True, help="Remove as bordas para mudar a resolução e o Hash.")
 zoom_intensity = st.sidebar.slider("Intensidade do Zoom", 0.01, 0.10, 0.03, 0.01)
 
 use_color = st.sidebar.checkbox("Alterar Cores/Brilho", value=True)
-brightness = st.sidebar.slider("Brilho", 0.8, 1.2, 1.05, 0.05, help="1.0 = Original. >1.0 = Mais claro.")
+brightness = st.sidebar.slider("Brilho", 0.8, 1.2, 1.05, 0.05)
 contrast = st.sidebar.slider("Contraste", 0.8, 1.2, 1.10, 0.05)
 
-use_mirror = st.sidebar.checkbox("Espelhar Vídeo (Horizontal)", value=False, help="Inverte esquerda/direita. Cuidado com textos no vídeo!")
+use_mirror = st.sidebar.checkbox("Espelhar Vídeo (Horizontal)", value=False, help="Inverte esquerda/direita. Cuidado com textos!")
 
 # --- FUNÇÕES AUXILIARES ---
 
@@ -44,26 +45,19 @@ def generate_noise(duration, fps=44100, volume=0.01):
     noise = np.random.uniform(-volume, volume, (int(duration * fps), 2))
     return AudioArrayClip(noise, fps=fps)
 
-def apply_zoom(clip, intensity=0.03):
-    # Função de Zoom Progressivo (Ken Burns effect)
-    # No MoviePy v2, usamos Resize com lambda
-    def resize_func(t):
-        # O zoom aumenta com o tempo 't'
-        # Em t=0, zoom = 1. No final, zoom = 1 + intensity
-        return 1 + (intensity * (t / clip.duration))
+def apply_zoom_crop(clip, intensity=0.03):
+    # Zoom fixo removendo bordas (Mais seguro e rápido que zoom dinâmico)
+    w = clip.w
+    h = clip.h
+    margin_w = int(w * intensity)
+    margin_h = int(h * intensity)
     
-    # Aplicamos um crop centralizado que diminui com o tempo (simulando zoom in)
-    # Mas o jeito mais simples e compatível é redimensionar e cortar o centro.
-    # Vamos usar uma abordagem simplificada: Crop fixo leve nas bordas para mudar resolução
-    # ou Resize progressivo (pesado).
+    # 1. Corta as bordas (Crop)
+    cropped = clip.cropped(x1=margin_w, y1=margin_h, x2=w-margin_w, y2=h-margin_h)
     
-    # Abordagem Leve e Eficiente: Crop fixo de 2% (Remove bordas "sujas" e muda resolução)
-    # Para zoom dinâmico real no navegador seria muito pesado. Vamos fazer um "Crop & Zoom" fixo
-    # que já altera o Hash suficientemente.
-    
-    w, h = clip.size
-    margin = int(w * intensity) # Corta X% das bordas
-    return clip.cropped(x1=margin, y1=margin, x2=w-margin, y2=h-margin).resized((w, h))
+    # 2. Redimensiona de volta para o tamanho original
+    # Sintaxe V2 segura
+    return cropped.with_effects([vfx.Resize(new_size=(w, h))])
 
 # --- PROCESSAMENTO PRINCIPAL ---
 def process_video(uploaded_file):
@@ -84,6 +78,7 @@ def process_video(uploaded_file):
         start_time = 0
         duration = video.duration
         
+        # Loop de análise
         for i, t in enumerate(np.arange(0, duration, chunk_len)):
             chunk = audio.subclipped(t, min(t + chunk_len, duration))
             chunk_data = chunk.to_soundarray(fps=22050)
@@ -109,22 +104,25 @@ def process_video(uploaded_file):
             
         final_clip = concatenate_videoclips(clips)
         
-        # A) Espelhamento (O mais forte contra Hash)
+        # A) Espelhamento
         if use_mirror:
             final_clip = final_clip.with_effects([vfx.Mirrorx()])
             
-        # B) Cores e Contraste (Color Correction)
+        # B) Cores e Contraste (CORRIGIDO)
         if use_color:
-            # Colorx multiplica a cor (brilho)
-            # LumContrast altera contraste
-            final_clip = final_clip.with_effects([
-                vfx.MultiplyColor(brightness),
-                vfx.LumContrast(lum=0, contrast=contrast, contrast_thr=127)
-            ])
+            effects_list = []
+            if brightness != 1.0:
+                effects_list.append(vfx.MultiplyColor(brightness))
+            if contrast != 1.0:
+                # Aqui estava o erro: removemos o argumento 'contrast_thr'
+                effects_list.append(vfx.LumContrast(lum=0, contrast=contrast))
             
-        # C) Zoom/Crop (Muda a geometria dos pixels)
+            if effects_list:
+                final_clip = final_clip.with_effects(effects_list)
+            
+        # C) Zoom/Crop
         if use_zoom:
-            final_clip = apply_zoom(final_clip, intensity=zoom_intensity)
+            final_clip = apply_zoom_crop(final_clip, intensity=zoom_intensity)
 
         bar.progress(50)
 
@@ -169,14 +167,12 @@ uploaded_file = st.file_uploader("Envie seu vídeo (.mp4)", type=["mp4"])
 if uploaded_file is not None:
     st.video(uploaded_file)
     
-    # Nome do arquivo de saída com sufixo aleatório para garantir unicidade
-    import random
     suffix = random.randint(1000, 9999)
     original_name = os.path.splitext(uploaded_file.name)[0]
     output_name = f"{original_name}_new_{suffix}.mp4"
     
     if st.button("🛡️ GERAR NOVO VÍDEO ÚNICO", type="primary"):
-        with st.spinner('Criando nova versão do vídeo...'):
+        with st.spinner('Processando...'):
             result_path, error = process_video(uploaded_file)
             
             if error:
