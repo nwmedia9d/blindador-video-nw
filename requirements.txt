@@ -1,8 +1,4 @@
 streamlit
 moviepy==1.0.3
-imageio==2.9.0
-imageio-ffmpeg==0.4.2
-numpy==1.24.3
 decorator==4.4.2
-proglog
-requests
+imageio-ffmpeg
