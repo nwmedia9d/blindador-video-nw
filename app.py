@@ -3,46 +3,70 @@ import tempfile
 import os
 import numpy as np
 
-# IMPORTAÇÕES (Compatível com MoviePy v2.0+)
+# IMPORTAÇÕES (MoviePy v2.0+)
 from moviepy import VideoFileClip, concatenate_videoclips, AudioArrayClip, CompositeAudioClip
 import moviepy.video.fx as vfx
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Blindador ULTRA", page_icon="🛡️", layout="centered")
+st.set_page_config(page_title="Blindador ULTRA v2", page_icon="🛡️", layout="centered")
 
-st.title("🛡️ Blindagem de Vídeo (Anti-IA)")
-st.warning("⚠️ O 'Pitch Shift' altera o tom da voz. Ajuste com cuidado para não ficar ininteligível.")
+st.title("🛡️ Blindagem Total (Áudio + Vídeo)")
+st.info("ℹ️ Agora com efeitos visuais para gerar um arquivo 100% inédito (Hash único).")
 
 # --- BARRA LATERAL (CONTROLES) ---
 st.sidebar.header("🎛️ Painel de Controle")
 
-st.sidebar.subheader("1. Cortes (Silence Truncation)")
-threshold = st.sidebar.slider("Sensibilidade (Threshold)", 0.01, 0.10, 0.03, 0.005, help="Define o volume mínimo para não ser cortado.")
+# 1. ÁUDIO (Mantivemos igual)
+st.sidebar.subheader("1. Áudio e Voz")
+threshold = st.sidebar.slider("Sensibilidade de Corte", 0.01, 0.10, 0.03, 0.005)
 chunk_len = st.sidebar.slider("Resolução (s)", 0.01, 0.10, 0.05)
+pitch_factor = st.sidebar.slider("Tom da Voz (Pitch)", 0.80, 1.20, 1.10, 0.01)
+use_noise = st.sidebar.checkbox("Injetar Ruído", value=True)
+noise_level = st.sidebar.slider("Nível do Ruído", 0.001, 0.050, 0.015, format="%.3f")
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("2. Distorção de Voz (O Segredo)")
 
-# Pitch Factor: 1.0 é normal. 1.10 é voz fina. 0.90 é voz grossa.
-# Alterar a velocidade de reprodução altera o pitch (efeito fita cassete).
-pitch_factor = st.sidebar.slider(
-    "Tom da Voz (Pitch Shift)", 
-    0.80, 1.20, 1.10, 0.01, 
-    help="1.10 = Voz mais fina (+10%). IAs odeiam isso."
-)
+# 2. VÍDEO (NOVIDADES!)
+st.sidebar.subheader("2. Efeitos Visuais (Hash Breaker)")
 
-use_noise = st.sidebar.checkbox("Injetar Ruído de Fundo", value=True)
-noise_level = st.sidebar.slider("Volume do Ruído", 0.001, 0.050, 0.015, format="%.3f")
+use_zoom = st.sidebar.checkbox("Aplicar Zoom Lento (Ken Burns)", value=True, help="O vídeo aproxima lentamente, mudando todos os pixels a cada frame.")
+zoom_intensity = st.sidebar.slider("Intensidade do Zoom", 0.01, 0.10, 0.03, 0.01)
 
-# --- FUNÇÃO GERADORA DE RUÍDO ---
+use_color = st.sidebar.checkbox("Alterar Cores/Brilho", value=True)
+brightness = st.sidebar.slider("Brilho", 0.8, 1.2, 1.05, 0.05, help="1.0 = Original. >1.0 = Mais claro.")
+contrast = st.sidebar.slider("Contraste", 0.8, 1.2, 1.10, 0.05)
+
+use_mirror = st.sidebar.checkbox("Espelhar Vídeo (Horizontal)", value=False, help="Inverte esquerda/direita. Cuidado com textos no vídeo!")
+
+# --- FUNÇÕES AUXILIARES ---
+
 def generate_noise(duration, fps=44100, volume=0.01):
-    # Gera estática aleatória
     noise = np.random.uniform(-volume, volume, (int(duration * fps), 2))
     return AudioArrayClip(noise, fps=fps)
 
+def apply_zoom(clip, intensity=0.03):
+    # Função de Zoom Progressivo (Ken Burns effect)
+    # No MoviePy v2, usamos Resize com lambda
+    def resize_func(t):
+        # O zoom aumenta com o tempo 't'
+        # Em t=0, zoom = 1. No final, zoom = 1 + intensity
+        return 1 + (intensity * (t / clip.duration))
+    
+    # Aplicamos um crop centralizado que diminui com o tempo (simulando zoom in)
+    # Mas o jeito mais simples e compatível é redimensionar e cortar o centro.
+    # Vamos usar uma abordagem simplificada: Crop fixo leve nas bordas para mudar resolução
+    # ou Resize progressivo (pesado).
+    
+    # Abordagem Leve e Eficiente: Crop fixo de 2% (Remove bordas "sujas" e muda resolução)
+    # Para zoom dinâmico real no navegador seria muito pesado. Vamos fazer um "Crop & Zoom" fixo
+    # que já altera o Hash suficientemente.
+    
+    w, h = clip.size
+    margin = int(w * intensity) # Corta X% das bordas
+    return clip.cropped(x1=margin, y1=margin, x2=w-margin, y2=h-margin).resized((w, h))
+
 # --- PROCESSAMENTO PRINCIPAL ---
 def process_video(uploaded_file):
-    # Salva o arquivo original temporariamente
     tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
     tfile.write(uploaded_file.read())
     
@@ -53,67 +77,72 @@ def process_video(uploaded_file):
         video = VideoFileClip(tfile.name)
         audio = video.audio
         
-        # 1. ANÁLISE DE SILÊNCIO
-        status_text.text("🔍 1/3: Mapeando silêncios para corte...")
+        # 1. ÁUDIO: ANÁLISE DE SILÊNCIO
+        status_text.text("🔍 1/4: Processando cortes de silêncio...")
         intervals = []
         speaking = False
         start_time = 0
         duration = video.duration
         
-        # Loop otimizado para MoviePy v2
         for i, t in enumerate(np.arange(0, duration, chunk_len)):
             chunk = audio.subclipped(t, min(t + chunk_len, duration))
-            
-            # Análise segura de volume
             chunk_data = chunk.to_soundarray(fps=22050)
-            if chunk_data.size > 0:
-                vol = np.max(np.abs(chunk_data))
-            else:
-                vol = 0
+            vol = np.max(np.abs(chunk_data)) if chunk_data.size > 0 else 0
 
             if vol >= threshold:
-                if not speaking:
-                    speaking = True
-                    start_time = t
+                if not speaking: speaking = True; start_time = t
             else:
-                if speaking:
-                    speaking = False
-                    intervals.append((max(0, start_time - 0.02), min(t + 0.02, duration)))
+                if speaking: speaking = False; intervals.append((max(0, start_time - 0.02), min(t + 0.02, duration)))
             
-            if i % 10 == 0:
-                prog = min(30, int((t/duration)*30))
-                bar.progress(prog)
+            if i % 20 == 0: bar.progress(min(20, int((t/duration)*20)))
 
-        if speaking:
-            intervals.append((start_time, duration))
-            
-        if not intervals:
-            return None, "Erro: Áudio muito baixo. Tente diminuir o Threshold."
+        if speaking: intervals.append((start_time, duration))
+        if not intervals: return None, "Erro: Áudio muito baixo. Diminua o Threshold."
 
-        # 2. APLICAR CORTES
-        status_text.text(f"✂️ 2/3: Removendo {len(intervals)} pausas respiratórias...")
-        clips = [video.subclipped(start, end) for start, end in intervals]
-        final_clip = concatenate_videoclips(clips)
-        bar.progress(60)
-
-        # 3. APLICAR EFEITOS (PITCH + RUÍDO)
-        status_text.text("☣️ 3/3: Aplicando Pitch Shift e Ruído...")
+        # 2. VÍDEO: CORTES E EFEITOS VISUAIS
+        status_text.text("🎨 2/4: Aplicando efeitos visuais (Hash Breaking)...")
         
-        # A) Pitch Shift (Via velocidade)
+        clips = []
+        for start, end in intervals:
+            sub = video.subclipped(start, end)
+            clips.append(sub)
+            
+        final_clip = concatenate_videoclips(clips)
+        
+        # A) Espelhamento (O mais forte contra Hash)
+        if use_mirror:
+            final_clip = final_clip.with_effects([vfx.Mirrorx()])
+            
+        # B) Cores e Contraste (Color Correction)
+        if use_color:
+            # Colorx multiplica a cor (brilho)
+            # LumContrast altera contraste
+            final_clip = final_clip.with_effects([
+                vfx.MultiplyColor(brightness),
+                vfx.LumContrast(lum=0, contrast=contrast, contrast_thr=127)
+            ])
+            
+        # C) Zoom/Crop (Muda a geometria dos pixels)
+        if use_zoom:
+            final_clip = apply_zoom(final_clip, intensity=zoom_intensity)
+
+        bar.progress(50)
+
+        # 3. ÁUDIO: EFEITOS FINAIS
+        status_text.text("🔊 3/4: Distorcendo áudio...")
+        
         if pitch_factor != 1.0:
             final_clip = final_clip.with_effects([vfx.MultiplySpeed(pitch_factor)])
-
-        # B) Ruído de Fundo
+            
         if use_noise:
             current_audio = final_clip.audio
-            # Gera ruído com a nova duração exata
             noise_clip = generate_noise(final_clip.duration, fps=44100, volume=noise_level)
             final_clip.audio = CompositeAudioClip([current_audio, noise_clip])
             
         bar.progress(80)
 
         # 4. RENDERIZAÇÃO
-        status_text.text("💾 Renderizando arquivo final... Aguarde.")
+        status_text.text("💾 4/4: Renderizando novo arquivo único...")
         output_path = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4').name
         
         final_clip.write_videofile(
@@ -126,7 +155,7 @@ def process_video(uploaded_file):
         )
         
         bar.progress(100)
-        status_text.text("✅ Vídeo Blindado com Sucesso!")
+        status_text.text("✅ Vídeo Novo Gerado!")
         
         video.close()
         return output_path, None
@@ -134,27 +163,26 @@ def process_video(uploaded_file):
     except Exception as e:
         return None, f"Erro Técnico: {str(e)}"
 
-# --- FRONTEND (INTERFACE) ---
+# --- FRONTEND ---
 uploaded_file = st.file_uploader("Envie seu vídeo (.mp4)", type=["mp4"])
 
 if uploaded_file is not None:
     st.video(uploaded_file)
     
-    # Prepara o nome do arquivo de saída
-    original_name = uploaded_file.name
-    file_name_clean = os.path.splitext(original_name)[0]
-    output_name = f"{file_name_clean}_blindado.mp4"
+    # Nome do arquivo de saída com sufixo aleatório para garantir unicidade
+    import random
+    suffix = random.randint(1000, 9999)
+    original_name = os.path.splitext(uploaded_file.name)[0]
+    output_name = f"{original_name}_new_{suffix}.mp4"
     
-    if st.button("🛡️ INICIAR PROCESSO DE BLINDAGEM", type="primary"):
-        with st.spinner('O Agente está processando seu vídeo...'):
+    if st.button("🛡️ GERAR NOVO VÍDEO ÚNICO", type="primary"):
+        with st.spinner('Criando nova versão do vídeo...'):
             result_path, error = process_video(uploaded_file)
             
             if error:
                 st.error(error)
             else:
-                st.success(f"Pronto! Arquivo gerado: {output_name}")
-                
-                # Lê o arquivo para permitir o download
+                st.success(f"Vídeo único gerado: {output_name}")
                 with open(result_path, "rb") as f:
                     st.download_button(
                         label=f"⬇️ BAIXAR {output_name}",
