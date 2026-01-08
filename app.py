@@ -138,28 +138,32 @@ def process_video(uploaded_file):
             
         bar.progress(80)
 
-        # 4. RENDERIZAÇÃO
-        status_text.text("💾 4/4: Renderizando novo arquivo único...")
+        # 4. RENDERIZAÇÃO (MODO ECONOMIA DE MEMÓRIA)
+        status_text.text("💾 4/4: Renderizando... (Modo Single-Thread para não travar)")
+        
         output_path = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4').name
         
+        # MUDANÇAS CRUCIAIS AQUI:
+        # threads=1: Obriga a usar só 1 núcleo. É mais lento, mas gasta MUITO menos RAM.
+        # preset='superfast': Troca qualidade de compressão por velocidade e menos memória.
         final_clip.write_videofile(
             output_path,
             codec='libx264',
             audio_codec='aac',
-            preset='ultrafast',
-            threads=4,
+            preset='superfast', 
+            threads=1,          # O SEGREDO: Reduzir para 1 evita o estouro de memória (502)
             logger=None
         )
         
-        bar.progress(100)
-        status_text.text("✅ Vídeo Novo Gerado!")
-        
+        # Limpeza explícita de memória
+        final_clip.close()
         video.close()
-        return output_path, None
-
-    except Exception as e:
-        return None, f"Erro Técnico: {str(e)}"
-
+        del final_clip
+        del video
+        del audio
+        
+        bar.progress(100)
+        
 # --- FRONTEND ---
 uploaded_file = st.file_uploader("Envie seu vídeo (.mp4)", type=["mp4"])
 
