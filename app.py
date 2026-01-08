@@ -3,17 +3,17 @@ import tempfile
 import os
 import random
 import numpy as np
-import gc # Importante para limpar memória no Render
+import gc
 
 # IMPORTAÇÕES (MoviePy v2.0+)
 from moviepy import VideoFileClip, concatenate_videoclips, AudioArrayClip, CompositeAudioClip
 import moviepy.video.fx as vfx
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Blindador ULTRA v4 (Render Edition)", page_icon="🛡️", layout="centered")
+st.set_page_config(page_title="Blindador ULTRA v5", page_icon="🛡️", layout="centered")
 
-st.title("🛡️ Blindagem Anti-IA (Modo Render)")
-st.success("Status: Otimizado para servidores com pouca memória.")
+st.title("🛡️ Blindagem Anti-IA (Render Edition)")
+st.success("Status: Otimizado para evitar Erro 502 (Memória).")
 
 # --- BARRA LATERAL (CONTROLES) ---
 st.sidebar.header("🎛️ Painel de Controle")
@@ -31,10 +31,10 @@ st.sidebar.markdown("---")
 # 2. VÍDEO
 st.sidebar.subheader("2. Efeitos Visuais")
 
-use_zoom = st.sidebar.checkbox("Aplicar Zoom Fixo (Corte de Borda)", value=True, help="Remove as bordas para mudar o Hash sem gastar muita memória.")
+use_zoom = st.sidebar.checkbox("Aplicar Zoom Fixo", value=True, help="Remove bordas para mudar o Hash. Essencial.")
 zoom_intensity = st.sidebar.slider("Intensidade do Zoom", 0.01, 0.10, 0.03, 0.01)
 
-use_color = st.sidebar.checkbox("Alterar Cores/Brilho", value=False, help="Desligue isso se o servidor travar (consome muita RAM).")
+use_color = st.sidebar.checkbox("Alterar Cores (Pesado)", value=False, help="Mantenha desligado se o Render travar.")
 brightness = st.sidebar.slider("Brilho", 0.8, 1.2, 1.05, 0.05)
 contrast = st.sidebar.slider("Contraste", 0.8, 1.2, 1.10, 0.05)
 
@@ -56,22 +56,25 @@ def apply_zoom_crop(clip, intensity=0.03):
 
 # --- PROCESSAMENTO PRINCIPAL ---
 def process_video(uploaded_file):
-    tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-    tfile.write(uploaded_file.read())
-    
-    status_text = st.empty()
-    bar = st.progress(0)
-    
-    # Define variáveis como None para limpeza segura no final
+    # Configuração inicial de variáveis para limpeza segura
+    tfile = None
     video = None
     final_clip = None
+    output_path = None
     
-    try: # <--- O INÍCIO DO BLOCO DE TENTATIVA
+    try:
+        # Salva o arquivo temporariamente
+        tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+        tfile.write(uploaded_file.read())
+        
+        status_text = st.empty()
+        bar = st.progress(0)
+        
         video = VideoFileClip(tfile.name)
         audio = video.audio
         
-        # 1. ÁUDIO: ANÁLISE DE SILÊNCIO
-        status_text.text("🔍 1/4: Processando cortes de silêncio...")
+        # 1. ÁUDIO: ANÁLISE
+        status_text.text("🔍 1/4: Analisando silêncios...")
         intervals = []
         speaking = False
         start_time = 0
@@ -90,10 +93,12 @@ def process_video(uploaded_file):
             if i % 20 == 0: bar.progress(min(20, int((t/duration)*20)))
 
         if speaking: intervals.append((start_time, duration))
-        if not intervals: return None, "Erro: Áudio muito baixo. Diminua o Threshold."
+        
+        if not intervals: 
+            return None, "Erro: Áudio muito baixo. Diminua o Threshold."
 
-        # 2. VÍDEO: CORTES E EFEITOS VISUAIS
-        status_text.text("🎨 2/4: Aplicando efeitos visuais...")
+        # 2. VÍDEO: CORTES
+        status_text.text("🎨 2/4: Aplicando cortes e efeitos...")
         
         clips = []
         for start, end in intervals:
@@ -102,21 +107,16 @@ def process_video(uploaded_file):
             
         final_clip = concatenate_videoclips(clips)
         
-        # A) Espelhamento
+        # EFEITOS VISUAIS
         if use_mirror:
             final_clip = final_clip.with_effects([vfx.Mirrorx()])
             
-        # B) Cores e Contraste
         if use_color:
             effects_list = []
-            if brightness != 1.0:
-                effects_list.append(vfx.MultiplyColor(brightness))
-            if contrast != 1.0:
-                effects_list.append(vfx.LumContrast(lum=0, contrast=contrast))
-            if effects_list:
-                final_clip = final_clip.with_effects(effects_list)
+            if brightness != 1.0: effects_list.append(vfx.MultiplyColor(brightness))
+            if contrast != 1.0: effects_list.append(vfx.LumContrast(lum=0, contrast=contrast))
+            if effects_list: final_clip = final_clip.with_effects(effects_list)
             
-        # C) Zoom/Crop (Versão Leve)
         if use_zoom:
             final_clip = apply_zoom_crop(final_clip, intensity=zoom_intensity)
 
@@ -135,37 +135,36 @@ def process_video(uploaded_file):
             
         bar.progress(80)
 
-        # 4. RENDERIZAÇÃO OTIMIZADA (O SEGREDO DO RENDER)
+        # 4. RENDERIZAÇÃO OTIMIZADA
         status_text.text("💾 4/4: Renderizando (Modo Seguro - 1 Core)...")
         output_path = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4').name
         
-        # CONFIGURAÇÃO CRUCIAL PARA NÃO DAR ERRO 502:
         final_clip.write_videofile(
             output_path,
             codec='libx264',
             audio_codec='aac',
-            preset='superfast', # Mais rápido, gasta menos RAM
-            threads=1,          # OBRIGATÓRIO: Usa só 1 núcleo para não estourar a memória
+            preset='superfast', # Crucial para economizar RAM
+            threads=1,          # Crucial para evitar Erro 502
             logger=None
         )
         
         bar.progress(100)
-        status_text.text("✅ Vídeo Gerado!")
+        status_text.text("✅ Vídeo Gerado com Sucesso!")
         
-        # LIMPEZA DE MEMÓRIA EXPLÍCITA
+        # Limpeza de memória
         final_clip.close()
         video.close()
         del final_clip
         del video
         del audio
-        gc.collect() # Força o Python a limpar a memória RAM
+        gc.collect()
         
         return output_path, None
 
-    except Exception as e: # <--- O BLOCO EXCEPT QUE FALTAVA
+    except Exception as e:
         return None, f"Erro Técnico: {str(e)}"
 
-# --- FRONTEND ---
+# --- FRONTEND (INTERFACE) ---
 uploaded_file = st.file_uploader("Envie seu vídeo (.mp4)", type=["mp4"])
 
 if uploaded_file is not None:
@@ -182,7 +181,8 @@ if uploaded_file is not None:
             if error:
                 st.error(error)
             else:
-                st.success(f"Vídeo pronto: {output_name}")
+                st.balloons()
+                st.success(f"Pronto! Arquivo: {output_name}")
                 with open(result_path, "rb") as f:
                     st.download_button(
                         label="⬇️ BAIXAR VÍDEO",
